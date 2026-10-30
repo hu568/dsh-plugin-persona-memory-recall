@@ -136,21 +136,25 @@ JOURNAL.jsonl（只读尾部 scanEntries 条，默认 500）
 ## 设置页：记忆 → 自动召回
 
 父插件在 DSH「设置 → 记忆」页留了扩展点。本插件通过
-`ctx.personaMemory.settings.register()` 注册一组声明式设置项，页面只负责渲染与
-回写，不用本插件自带界面：
+`ctx.personaMemory.settings.register()` 注册声明式设置项，页面只负责渲染与
+回写，不用本插件自带界面。按用途拆成两组：
 
-| 项 | 控件 | 默认 | 说明 |
-|---|---|---|---|
-| `recall.enabled` | 开关 | 开 | 每轮自动召回总开关 |
-| `recall.maxChars` | 文本 | `600` | 每轮字符预算（≥80） |
-| `recall.topK` | 文本 | `5` | 最多命中段数（≥1） |
-| `recall.minScore` | 文本 | `1` | BM25 绝对分门槛（≥0） |
-| `recall.scanEntries` | 文本 | `500` | 索引日志尾部条数（≥1） |
-| `recall.minTurnsBetween` | 文本 | `0` | 两次注入最小间隔（≥0） |
-| `recall.subagent` | 开关 | 关 | 子代理会话是否也召回 |
-| `recall.dedupeAgainstMemory` | 开关 | 开 | 与 FACT.md / 项目 MEMORY.md 去重 |
-| `recall.debug` | 开关 | 关 | 诊断日志 |
-| `recall.journal` | 只读 | — | 当前生效的日志文件路径 |
+- **自动召回**（主开关 + 只读日志路径）：始终展开，一眼能看到当前是否开启；
+- **自动召回 · 高级**（参数项）：超过 3 项，页面按分组折叠规则默认收起，
+  点分组标题展开，避免把「记忆」页撑长。
+
+| 项 | 分组 | 控件 | 默认 | 说明 |
+|---|---|---|---|---|
+| `recall.enabled` | 自动召回 | 开关 | 开 | 每轮自动召回总开关 |
+| `recall.journal` | 自动召回 | 只读 | — | 当前生效的日志文件路径 |
+| `recall.maxChars` | 高级 | 文本 | `600` | 每轮字符预算（≥80） |
+| `recall.topK` | 高级 | 文本 | `5` | 最多命中段数（≥1） |
+| `recall.minScore` | 高级 | 文本 | `1` | BM25 绝对分门槛（≥0） |
+| `recall.scanEntries` | 高级 | 文本 | `500` | 索引日志尾部条数（≥1） |
+| `recall.minTurnsBetween` | 高级 | 文本 | `0` | 两次注入最小间隔（≥0） |
+| `recall.subagent` | 高级 | 开关 | 关 | 子代理会话是否也召回 |
+| `recall.dedupeAgainstMemory` | 高级 | 开关 | 开 | 与 FACT.md / 项目 MEMORY.md 去重 |
+| `recall.debug` | 高级 | 开关 | 关 | 诊断日志 |
 
 回写只存**用户显式改过**的键，落在 `$DSH_HOME/memory/recall.json`（与父插件的
 `injection.json` 并列）；没设过的键仍取 `cordis.patch.yml` 里的 config，删掉文件

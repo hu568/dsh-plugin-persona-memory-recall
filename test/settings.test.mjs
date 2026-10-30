@@ -143,10 +143,12 @@ const itemOf = (items, key) => {
     assert.equal(itemOf(pm.items, 'debug').value, false);
     assert.equal(itemOf(pm.items, 'enabled').group, '自动召回');
     assert.equal(itemOf(pm.items, 'enabled').kind, 'toggle');
+    assert.equal(itemOf(pm.items, 'maxChars').group, '自动召回 · 高级', '参数项应放进高级分组');
     assert.equal(itemOf(pm.items, 'maxChars').kind, 'text');
 
     const readonly = pm.items.get('recall.journal');
     assert.equal(readonly.kind, 'readonly');
+    assert.equal(readonly.group, '自动召回', '只读日志路径应与主开关同组');
     assert.equal(readonly.value, journal, '只读项应显示实际日志路径');
 }
 

@@ -96,6 +96,7 @@ export declare function recallOverridesPath(): string;
 export declare const SETTINGS_SPECS: ReadonlyArray<{
     key: keyof RecallConfig;
     kind: 'toggle' | 'text';
+    group?: string;
     title: string;
     description: string;
     min?: number;
