@@ -1,0 +1,13 @@
+# dsh-persona-memory-recall bundle 层：把召回插件行插进**宿主组合**。
+#
+# 为什么是宿主平面而不是 agent 预设：召回要向所有预设的每个会话生效，
+# 且它消费的 `agent/pre-step` 事件由宿主的 agent-loop 派发。
+#
+# 与 `@dsh-external/dsh-persona-memory` 是独立的两行：
+#   persona-memory         → 角色/全局/项目记忆（系统提示词段落，首条消息冻结）
+#   persona-memory-recall  → 长期日志按轮召回（本轮用户消息之后的一条 user 快照）
+# 两者只通过磁盘上的 `$DSH_HOME/memory/JOURNAL.jsonl` 约定耦合，可以单独停用。
+- insert:
+    - id: persona-memory-recall
+      name: '@dsh-external/dsh-persona-memory-recall'
+      config: {}
