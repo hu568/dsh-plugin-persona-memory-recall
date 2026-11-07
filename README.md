@@ -193,6 +193,10 @@ dsh plugin --profile <profile> add github:hu568/dsh-plugin-persona-memory-recall
 安装后本包被追加进 profile 的 `dsh.profile.bundles`，其 `cordis.patch.yml` 把
 `persona-memory-recall` 一行插进宿主组合。
 
+**装包本身不需要重启**：清单写入后，运行中的引擎经 HMR 重载该层（父插件 README
+「装完不用重启，改源码才要重启」有同一套实测，DSH `0.2.2-rc.1`）。pnpm 报的 `cordis` peer
+缺失也可忽略——运行时不解析它，裸模块引用只有 `schemastery`。
+
 **注意**：本插件是宿主半 JavaScript，改完 `lib/*.js` 必须重启 DSH 才生效
 （原因与父插件 README「排错：改完 lib/*.js 为什么还是旧行为」相同：DSH 默认不监听
 `node_modules`，ESM 有加载缓存）。
