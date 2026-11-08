@@ -227,6 +227,8 @@ node test/settings.test.mjs
 node test/real-data.test.mjs        # 只读真实日志
 ```
 
+`run-all.mjs` 开跑前会调用 `test/ensure-deps.mjs` 自动补齐 `schemastery` 与宿主包链接（缺才补，失败只警告）。
+
 需要宿主包的 `cordis-integration.test.mjs` 也由 `run-all.mjs` 一并跑：宿主包目录
 （`cordis` / `@deepseek-ai/dsh-system-prompt`）由 `test/_host-paths.mjs` 自动探测，
 顺序为 `DSH_ASAR_ROOT` → `/opt/dsh/node_modules/@deepseek-ai` →
