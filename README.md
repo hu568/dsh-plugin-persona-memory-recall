@@ -211,9 +211,9 @@ dsh plugin --profile <profile> remove @dsh-external/dsh-persona-memory-recall
 
 ## 回归测试
 
-```powershell
-# 统一入口（自动跑仓库源码 + profile 里已安装的那份）
-pwsh -File test/run-all.ps1
+```bash
+# 一条命令跑全量（Windows / Linux / Android 通用，逐个跑 test/*.test.mjs）
+node test/run-all.mjs
 
 # 也可以单独跑纯 node 的用例
 node test/tokenize.test.mjs
@@ -227,13 +227,10 @@ node test/settings.test.mjs
 node test/real-data.test.mjs        # 只读真实日志
 ```
 
-需要宿主包的 `cordis-integration.test.mjs` 必须用 Harness 的 Electron node 跑
-（`run-all.ps1` 会自动处理）：
-
-```powershell
-$env:ELECTRON_RUN_AS_NODE='1'
-& 'C:\Users\Administrator\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe' test/cordis-integration.test.mjs
-```
+需要宿主包的 `cordis-integration.test.mjs` 也由 `run-all.mjs` 一并跑：宿主包目录
+（`cordis` / `@deepseek-ai/dsh-system-prompt`）由 `test/_host-paths.mjs` 自动探测，
+顺序为 `DSH_ASAR_ROOT` → `/opt/dsh/node_modules/@deepseek-ai` →
+`$DSH_HOME/profiles/*/node_modules/@deepseek-ai` → 旧 Windows asar 路径。
 
 | 测试 | 验什么 |
 |---|---|

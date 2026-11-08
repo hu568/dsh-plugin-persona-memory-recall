@@ -14,12 +14,13 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { resolveHostModules } from './_host-paths.mjs';
 
-const ASAR = process.env.DSH_ASAR_ROOT
-    ?? 'C:/Users/Administrator/AppData/Local/Programs/DeepSeek Harness/resources/app.asar/dsh/node_modules/@deepseek-ai';
+const HOST = resolveHostModules();
 const ENTRY = process.env.PERSONA_MEMORY_RECALL_ENTRY ?? new URL('../lib/index.js', import.meta.url).href;
 
-const { Context } = await import(`file:///${ASAR}/cordis/lib/index.js`);
+const { Context } = await import(pathToFileURL(join(HOST, 'cordis', 'lib', 'index.js')).href);
 const mod = await import(ENTRY);
 
 const home = mkdtempSync(join(tmpdir(), 'persona-memory-recall-e2e-'));
