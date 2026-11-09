@@ -11,7 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,10 +20,12 @@ import { resolveHostModules } from './_host-paths.mjs';
 const HOST = resolveHostModules();
 const ENTRY = process.env.PERSONA_MEMORY_RECALL_ENTRY ?? new URL('../lib/index.js', import.meta.url).href;
 
+// 先建临时 home 再 import：apply() 会按 DSH_HOME 读写压缩标记文件，绝不能碰真实 ~/.dsh。
+const home = mkdtempSync(join(tmpdir(), 'persona-memory-recall-e2e-'));
+process.env.DSH_HOME = home;
+
 const { Context } = await import(pathToFileURL(join(HOST, 'cordis', 'lib', 'index.js')).href);
 const mod = await import(ENTRY);
-
-const home = mkdtempSync(join(tmpdir(), 'persona-memory-recall-e2e-'));
 const file = join(home, 'JOURNAL.jsonl');
 writeFileSync(
     file,
@@ -76,7 +78,58 @@ assert.equal(second.messages.length, 1, '同一轮同一查询不应重复注入
 const irrelevant = await dispatch(2, '今天天气怎么样');
 assert.equal(irrelevant.messages.length, 1, '不命中不应注入');
 
-/* ══ 4. dispose 后监听器被摘掉 ══ */
+/* ══ 4. 压缩后重注入：真实 session/event → 真实 pre-step，重建包 splice 到用户消息之前 ══ */
+const pendingFile = join(home, 'memory', 'recall', 'pending-rehydrate.json');
+{
+    // 成功的压缩：error 缺省
+    ctx.emit(
+        'session/event',
+        { id: 'root-compacted' },
+        { type: 'compaction/end', data: { compactionId: 'c1', turn: 1 } },
+    );
+    const saved = JSON.parse(readFileSync(pendingFile, 'utf8'));
+    assert.ok(saved.sessions['root-compacted'], '压缩成功应把标记落盘');
+
+    const compactedAgent = {
+        id: 'root-compacted',
+        session: { id: 'root-compacted', header: { cwd: home }, snapshotEvents: () => [], events: [] },
+    };
+    const rehydrated = await ctx.waterfall(
+        'agent/pre-step',
+        { agent: compactedAgent, turn: 1, step: 1, signal: { aborted: false } },
+        () => Promise.resolve({ kind: 'enter', messages: [userMessage('今天天气怎么样')] }),
+    );
+    assert.equal(rehydrated.messages.length, 2, '压缩后的第一个用户轮应注入重建包');
+    assert.equal(rehydrated.messages[0].source.kind, mod.SOURCE_KIND);
+    assert.deepEqual(rehydrated.messages[0].source.sections.map((section) => section.name), [
+        mod.REHYDRATE_SECTION_NAME,
+    ]);
+    assert.match(rehydrated.messages[0].content[0].text, /^【会话已压缩】/, '开头应是固定句');
+    assert.equal(rehydrated.messages[1].source.kind, 'user', '真实用户消息必须在重建包之后');
+    const afterInject = JSON.parse(readFileSync(pendingFile, 'utf8'));
+    assert.equal(afterInject.sessions['root-compacted'], undefined, '注入成功后标记应被清掉');
+}
+
+/* ══ 5. 失败的压缩（data.error 非空）不置位，下一轮不注入 ══ */
+{
+    ctx.emit(
+        'session/event',
+        { id: 'root-failed' },
+        { type: 'compaction/end', data: { compactionId: 'c2', error: 'boom' } },
+    );
+    const failedAgent = {
+        id: 'root-failed',
+        session: { id: 'root-failed', header: { cwd: home }, snapshotEvents: () => [], events: [] },
+    };
+    const decision = await ctx.waterfall(
+        'agent/pre-step',
+        { agent: failedAgent, turn: 1, step: 1, signal: { aborted: false } },
+        () => Promise.resolve({ kind: 'enter', messages: [userMessage('今天天气怎么样')] }),
+    );
+    assert.equal(decision.messages.length, 1, '压缩失败时内容没被逐出，不应重注入');
+}
+
+/* ══ 6. dispose 后监听器被摘掉 ══ */
 await fiber.dispose();
 const afterDispose = await dispatch(3, '薄壳模式怎么短路 llm stream');
 assert.equal(afterDispose.messages.length, 1, '插件卸载后不应再注入');

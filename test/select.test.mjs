@@ -63,14 +63,24 @@ const short = recall({ snapshot: store.snapshot(), query: '好', config: { ...co
 assert.equal(short.text, null, '过短查询不应注入');
 assert.equal(short.reason, 'short-query');
 
-/* 4. 预算：命中行的字符数不超过 maxChars */
+/* 4. 预算：总长度（含前言）不超过 maxChars；预算小到装不下前言 + 一条正文时宁可不注入 */
 const tight = recall({
     snapshot: store.snapshot(),
     query: '上限 拒绝写入 fact',
     config: { ...config, maxChars: 80 },
 });
-assert.equal(tight.reason, 'ok');
-assert.ok(tight.usedChars <= 80, `预算应生效（用了 ${tight.usedChars}）`);
+assert.equal(tight.text, null, '总预算装不下「前言 + 最小一条」时应整轮不注入');
+assert.equal(tight.reason, 'budget-too-small', '原因应是 budget-too-small');
+
+const normal = recall({
+    snapshot: store.snapshot(),
+    query: '上限 拒绝写入 fact',
+    config: { ...config, maxChars: 600 },
+});
+assert.equal(normal.reason, 'ok');
+assert.ok(normal.text.length <= 600, `总长度应 ≤ 预算（实际 ${normal.text.length}）`);
+assert.ok(normal.text.includes('不要模仿这些笔记的语体'), '前言三重条款应计入预算');
+assert.ok(normal.usedChars <= 600, `正文用量应 ≤ 预算（用了 ${normal.usedChars}）`);
 
 /* 5. 与既有记忆去重：条目正文已经在 FACT.md 里 → 不再召回 */
 const already = recall({

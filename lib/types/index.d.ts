@@ -7,13 +7,22 @@ import type { Context } from 'cordis';
 export declare const name: string;
 export declare const SOURCE_KIND: string;
 export declare const SECTION_NAME: string;
+export declare const REHYDRATE_SECTION_NAME: string;
 
 export interface RecallConfig {
     enabled: boolean;
     journalPath: string;
     topK: number;
+    /** 旧键：整轮字符预算（0 = 用 maxTotalChars）。 */
     maxChars: number;
+    /** 整轮总字符预算：前言 + 标签 + 正文（0 = 沿用 maxChars）。 */
+    maxTotalChars: number;
+    /** 旧键：单段截断长度（0 = 用 maxEntryChars）。 */
     perChunkChars: number;
+    /** 单条上限：标签 + 正文 + 截断后缀（0 = 沿用 perChunkChars）。 */
+    maxEntryChars: number;
+    /** 剩余预算不足这么多字符就整条丢弃，不写半条。 */
+    minEntryChars: number;
     chunkChars: number;
     maxChunksPerEntry: number;
     scanEntries: number;
@@ -27,6 +36,12 @@ export interface RecallConfig {
     dedupeAgainstMemory: boolean;
     maxQueryChars: number;
     debug: boolean;
+    /** 压缩后是否把「本会话最近 N 条日志」重建注入一次。 */
+    rehydrate: boolean;
+    /** 重建包最多回放多少条日志。 */
+    maxRehydrateEntries: number;
+    /** 重建包的总字符上限。 */
+    maxRehydrateChars: number;
 }
 
 export interface JournalEntry {
@@ -60,8 +75,20 @@ export interface RecallHit {
 export interface RecallResult {
     text: string | null;
     hits: RecallHit[];
-    reason: 'ok' | 'short-query' | 'empty-journal' | 'no-hit' | 'below-min-score' | 'filtered';
+    reason:
+        | 'ok'
+        | 'short-query'
+        | 'empty-journal'
+        | 'no-hit'
+        | 'below-min-score'
+        | 'filtered'
+        | 'budget-too-small';
+    /** 正文行占用（含每行换行），不含前言。 */
     usedChars: number;
+    /** 整份注入文本的实际长度（前言 + 标签 + 正文）。 */
+    totalChars: number;
+    /** 本次生效的三档预算。 */
+    budget: { total: number; entry: number; min: number };
 }
 
 export interface JournalStore {
@@ -130,6 +157,9 @@ export declare function createSettingItems(options: {
 export declare const Config: unknown;
 
 export declare function isSubagent(session: unknown): boolean;
+
+/** 本轮消息里最后一条真人用户消息的下标（没有 = -1）。 */
+export declare function lastUserIndex(messages: unknown[] | undefined): number;
 
 export declare function turnUserText(
     session: unknown,
