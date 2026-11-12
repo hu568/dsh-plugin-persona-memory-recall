@@ -131,7 +131,7 @@ const itemOf = (items, key) => {
     const { ctx } = makeCtx({ services: { personaMemory: pm.service } });
     mod.apply(ctx, { journalPath: journal });
 
-    assert.equal(pm.items.size, 11, '应注册 10 个可写项 + 1 个只读项');
+    assert.equal(pm.items.size, 16, '应注册 15 个可写项 + 1 个只读项（0.6.0 新增 5 个语义项）');
     assert.equal(itemOf(pm.items, 'enabled').value, true);
     assert.equal(itemOf(pm.items, 'maxChars').value, '600');
     assert.equal(itemOf(pm.items, 'topK').value, '5');
@@ -142,6 +142,17 @@ const itemOf = (items, key) => {
     assert.equal(itemOf(pm.items, 'dedupeAgainstMemory').value, true);
     assert.equal(itemOf(pm.items, 'workspaceIsolation').value, true, '工作区隔离默认开');
     assert.equal(itemOf(pm.items, 'debug').value, false);
+    /* 0.6.0 新增：语义召回分组（默认开；没 key 时自动退回纯 BM25） */
+    assert.equal(itemOf(pm.items, 'semantic').value, true, '语义召回默认开');
+    assert.equal(itemOf(pm.items, 'semantic').group, '自动召回 · 语义');
+    assert.equal(itemOf(pm.items, 'semantic').kind, 'toggle');
+    assert.equal(itemOf(pm.items, 'semanticModel').value, 'BAAI/bge-m3');
+    assert.equal(itemOf(pm.items, 'semanticMinSimilarity').value, '0.55');
+    assert.equal(itemOf(pm.items, 'semanticTimeoutMs').value, '4000');
+    assert.equal(itemOf(pm.items, 'semanticApiKey').value, '', 'API Key 不回显（value 恒为空串）');
+    assert.equal(itemOf(pm.items, 'semanticApiKey').kind, 'text');
+    assert.match(itemOf(pm.items, 'semanticApiKey').description, /已配置|未配置/, '描述里只提示是否配置');
+    assert.doesNotMatch(itemOf(pm.items, 'semanticApiKey').description, /sk-/, '描述里不放 key 示例');
     assert.equal(itemOf(pm.items, 'enabled').group, '自动召回');
     assert.equal(itemOf(pm.items, 'enabled').kind, 'toggle');
     assert.equal(itemOf(pm.items, 'maxChars').group, '自动召回 · 高级', '参数项应放进高级分组');
@@ -221,7 +232,7 @@ const itemOf = (items, key) => {
     const pm = makePersonaMemory();
     const { ctx } = makeCtx({ services: { personaMemory: pm.service }, deferServices: true });
     mod.apply(ctx, { journalPath: journal });
-    assert.equal(pm.items.size, 11, 'deferred get 应通过 inject 补注册（10 个可写 + 1 个只读）');
+    assert.equal(pm.items.size, 16, 'deferred get 应通过 inject 补注册（15 个可写 + 1 个只读）');
 }
 
 /* ══ 5. 完全没有 personaMemory：静默跳过，召回监听仍在 ══ */
@@ -236,7 +247,7 @@ const itemOf = (items, key) => {
     const pm = makePersonaMemory();
     const { ctx, effects } = makeCtx({ services: { personaMemory: pm.service } });
     mod.apply(ctx, { journalPath: journal });
-    assert.equal(pm.items.size, 11, '10 个可写项 + 1 个只读项');
+    assert.equal(pm.items.size, 16, '15 个可写项 + 1 个只读项');
 
     const dispose = effects[effects.length - 1];
     assert.equal(typeof dispose, 'function', '注册时应挂一个 disposer');

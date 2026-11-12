@@ -5,16 +5,22 @@
 把命中的历史片段作为一条 `user/message` **插到本轮用户消息之前**（splice）——
 模型最后读到的是本轮意图，而不是工程日志的语体。
 
+0.6.0 起可选加一条 **embedding 语义通道（RAG）**：查询与日志片段各转成向量，在候选池内算
+cosine，再与 BM25 的排名做 RRF 融合，专补「同义改写 BM25 一条都召不回」的漏杀。
+默认开启但**没有 API key 就不生效**，任何失败一律降级为纯 BM25（详见
+[语义召回（RAG，0.6.0）](#语义召回rag060)）。
+
 | | |
 |---|---|
-| 版本 | `0.5.0`（本 README 按此版本核对） |
+| 版本 | `0.6.0`（本 README 按此版本核对） |
 | 许可证 | MIT，见 [LICENSE](./LICENSE) |
 | 安装规格 | `github:hu568/dsh-plugin-persona-memory-recall` |
 | 依赖 | 父插件 `@dsh-external/dsh-persona-memory`（只读它的 `JOURNAL.jsonl`，**不 import 它的代码**） |
 | 运行依赖 | `schemastery`（别名安装 `npm:@deepseek-ai/schemastery@3.18.2`） |
 | 平面 | **宿主组合**（对所有 agent 预设的每个会话生效） |
 | 设置页 | 「设置 → 记忆 → 自动召回」（需父插件提供 `ctx.personaMemory`） |
-| 确定性 | 同样的查询 + 同样的日志 → 同样的输出（无随机、无 LLM 调用） |
+| 确定性 | 纯 BM25 分支：同样的查询 + 同样的日志 → 同样的输出（无随机、无 LLM 调用）；语义通道是可选增量 |
+| 语义通道 | 可选（0.6.0 起）：硅基流动 `BAAI/bge-m3` embedding + RRF 融合；没 key / 超时 / 5xx / 坏缓存 → 纯 BM25 |
 
 ## 它补的是哪个缺口
 
@@ -114,8 +120,10 @@ JOURNAL.jsonl（只读尾部 scanEntries 条，默认 500）
   → 时间衰减：score × (1 + 0.15 × e^(−ageDays/30))（可关）
   → 工作区隔离：跨区行先剪掉（无 cwd 的旧行放行）
   → 跨轮去重：本会话注入过的片段指纹先剪掉
-  → 绝对分门槛 minScore + 相对门槛 top×relativeCut
-  → 命中门槛：matched≥2 或 罕见命中覆盖率≥0.15（否则单点巧合不算证据）
+  → 语义通道（可选，0.6.0）：查询 embed → 池内 cosine（≥ minSimilarity 且 ≥ 最高相似度 × relativeCut）
+    → 与 BM25 排名做 RRF 融合（k=60）；失败 / 无 key / 超时直接跳过，纯 BM25 分支产物逐字节不变
+  → 绝对分门槛 minScore + 相对门槛 top×relativeCut（语义候选另按相似度门槛过滤）
+  → 命中门槛：matched≥2 或 罕见命中覆盖率≥0.15（否则单点巧合不算证据）；语义候选命中不要求命中词
   → 每条日志最多 1 段（同一条命中多段时只留最高分那段）
   → topK 按最高分分档 5/4/3/1（且不超过用户 topK）
   → 去重（同文片段 + 与 FACT.md/项目 MEMORY.md 的行级 Dice；后者的失效条目已预先剔除）
@@ -162,6 +170,123 @@ JOURNAL.jsonl（只读尾部 scanEntries 条，默认 500）
 语料 = 12 条目标 + 4 条时间更新的近义干扰（与「插件/记忆/召回/预算」共享高频词、但讲的是另一件事）。
 查询与期望条目写死在测试里，**是构造语料、不是线上指标**，只用来防止排序退化，不代表真实召回率。
 真实日志部分只读尾部若干条、自动截正文短语当查询，日志内容变了照样能跑。
+
+语义通道另有两处评测：`test/rag-eval.test.mjs`（opt-in、真 API，对比 BM25 vs RAG 的 hit@1/hit@3）
+与 `TMP/rag-bench.mjs`（读真 JOURNAL，量建索引耗时 / 缓存体积 / 查询延迟，并做同义改写命中对比）。
+
+## 语义召回（RAG，0.6.0）
+
+**它补的是哪个缺口**：BM25 只认字面重合。查询说「写侧一直失败，最后是怎么修好的」，
+日志写的是「写侧故障链收尾」；查询说「召回注入太长，字符额度怎么卡」，日志写的是
+「召回预算三分法」—— 这类同义改写 BM25 里不一定召得回（离线评测里 12 条改写查询，
+BM25 的 hit@3 已经很高，但换成更狠的措辞就会掉）。0.6.0 加一条**可选**语义通道：
+把日志片段与查询各转成 embedding，在候选池内算 cosine，再与 BM25 的排名做 **RRF 融合**。
+
+它只补漏、不替换 BM25：
+
+- 纯 BM25 调用（`recall()` 不带 `semantic` 入参）的输出与 0.5.0 **逐字节一致**；
+- 语义候选命中可以跳过「命中词 ≥2 / 覆盖率 ≥0.15」的字面门槛（它本来就没有命中词）；
+- 任何失败（没 key / 超时 / 5xx / 坏缓存 / 太短的查询）一律退回纯 BM25，**绝不让本轮失败**。
+
+### 怎么开 / 怎么关
+
+| 操作 | 做法 |
+|---|---|
+| 开（默认） | `semantic: true`。但**没有 key 就自动不生效**：启动日志 `[persona-memory-recall] 语义召回未启用：没配置 API key`，纯 BM25 照常 |
+| 彻底关掉 | 设置页「记忆 → 自动召回 · 语义 → 语义召回（RAG）」关，或 config `semantic: false` |
+| 只调参数 | `semanticModel` / `semanticMinSimilarity` / `semanticTimeoutMs` / `semanticCachePath` / `semanticWarmupBatch` |
+
+关掉后不读也不写缓存文件，不产生任何网络请求；缓存可以安全删除。
+
+### key 放哪（三级回退）
+
+1. config `semanticApiKey`（组合包 / 覆盖层里的值，**不推荐**：容易随配置同步进 git）；
+2. `$DSH_HOME/memory/recall-rag.json` —— 设置页写 key 的落点，原子写 + `chmod 600`；
+3. 环境变量 `SILICONFLOW_API_KEY`。
+
+设置页只把 key 写进 `recall-rag.json`，**不写进 `recall.json` 覆盖层**，避免随配置同步进
+git / tgz；日志、错误信息、测试输出里绝不出现 key（评测脚本只打印来源路径与长度）。
+删掉 `recall-rag.json` 且不设 env 就回到「没 key → 纯 BM25」。
+
+### 隐私边界（只发这一段，发到哪里）
+
+语义召回**会发网络请求**。发出去的是：
+
+- 本轮用户消息（截断到 `maxQueryChars`，默认末尾 1500 字符）—— 用于查询向量；
+- JOURNAL 候选片段的**正文**（每段 ≤ `chunkChars`，默认 300 字符）—— 用于片段向量；
+- 不含 tags、日期、文件路径。
+
+**不发送**：系统提示词、模型回复、`FACT.md` / 项目 `MEMORY.md` 正文（与记忆文件的去重是
+本地算的）、key 本身。接口是硅基流动的 **`/embeddings`**（只返回向量，不产生对话回复），
+不是 chat completions —— 但「正文片段离开本机」这件事必须知道。不能接受就关掉语义通道，
+纯 BM25 完全本地。
+
+缓存文件里只有向量（float16 + base64），不含明文片段；但它是本机文件，按记忆文件的敏感度对待。
+
+### 降级行为（任何失败都不阻塞本轮）
+
+| 场景 | 行为 |
+|---|---|
+| 没 key / key 为空 | 启动时一条 info，纯 BM25 |
+| 查询短于 `semanticMinQueryChars`（默认 4） | 本轮不查语义 |
+| 接口超时（默认 4000 ms）/ 5xx / 返回畸形 | 本轮退回纯 BM25，日志 warn（同一错误 60 s 内只打一次） |
+| 缓存文件坏 / 版本或模型不符 | 当空库并 warn，后台重建，不抛错 |
+| 后台补向量失败 | warn，不 await，不影响本轮输出 |
+
+### 缓存与清理
+
+- 路径：`$DSH_HOME/memory/recall/embeddings.json`（`semanticCachePath` 可改）；
+- 结构：`{"v":1,"model":"BAAI/bge-m3","dim":1024,"vectors":{"<chunkHash>":"<base64 float16>"}}`；
+- 原子写：同目录 `tmp` + `rename`；坏文件 / 版本不符按空库处理；
+- **可丢弃可重建**：删掉文件即可。片段正文变了 hash 就变，旧向量按 `validHashes` 剪枝；
+  模型换了（`model` 不符）整库作废重建，不需要迁移；
+- 每轮后台最多补 `semanticWarmupBatch`（默认 64）条，不阻塞本轮；内部互斥，并发调用复用同一 Promise；
+- 体积：1024 维 float16 + base64 ≈ **2.7 KB/段**（1000 段约 2.6 MB，实测见 `TMP/rag-bench.mjs`）；
+- 清理：删缓存文件 / 改 `semanticCachePath` / 关语义通道。删除不影响召回正确性，只是下次要重建。
+
+### 评测与实测（2026-11-12 本机真 API）
+
+- `test/rag-eval.test.mjs`：**opt-in**，需 `SILICONFLOW_API_KEY`；没 key 直接 skip（打印提示，不联网）。
+  查询分三组（共 32 条）：**常规改写 12**（BM25 本来就对）、**普通查询 8**（几乎照抄正文，
+  BM25 必对，RAG 必须保住第 1 名）、**同义改写 12**（刻意避开实词，BM25 整条零命中）。
+  另外单独校验 `candidates=0` 档：语义没参与的轮次，输出必须与纯 BM25 一致，不混进「RAG 更好」的统计。
+- `TMP/rag-bench.mjs`：读真 `JOURNAL.jsonl`，量建索引耗时、缓存体积、查询延迟（均值 / P50 / P95），
+  命中对比同样**分三档**报：① `candidates>0`（语义真参与）、② `candidates=0`（未参与，校验等价 BM25）、
+  ③ 无 key 降级。数字如下（本机 2026-11-12，45 条日志 / 65 段，真 API，多次运行取范围）：
+
+| 指标 | 实测 |
+|---|---|
+| 全量建语义索引 | 65 段 / 3 批（batch=32），约 **1.4–2.8 s**（≈ 21–43 ms/段，受网络影响） |
+| 缓存体积 | **174.9 KB**（65 段，≈ 2.75 KB/段；1000 段外推 ≈ 2.6 MB） |
+| 缓存序列化 / 重载 | 6–21 ms / 5–17 ms |
+| 每轮 RAG 查询（含网络） | 均值 **150–300 ms**，P50 140–260 ms，P95 **230–480 ms**（受本机网络与对端负载影响，取多次实测区间；超时 4000 ms 仍留余量） |
+| 本地检索部分（cosine + RRF + 预算） | 约 1 ms |
+| 纯 BM25 一轮 | 约 1 ms |
+
+命中对比（构造语料 12 目标 + 4 干扰，**不是线上召回率**；`test/rag-eval.test.mjs` 三组口径）：
+
+| 查询组 | BM25 hit@1 · hit@3 | RAG hit@1 · hit@3 |
+|---|---|---|
+| 常规改写（12 条） | 10/12 · 12/12 | 10/12 · 12/12 |
+| 普通查询（8 条，BM25 必对） | 8/8 · 8/8 | 8/8 · 8/8 |
+| 同义改写（12 条，BM25 必漏） | 7/12 · 7/12 | **8/12 · 12/12** |
+| 合计（32 条） | 25/32 · 27/32 | **26/32 · 32/32** |
+
+- 常规组「不差于 BM25」（12/12 持平，其中「压缩之后上下文怎么补回来」#3 → #2）；
+- 普通组 hit@1 一条不掉（8/8），证明融合没把 BM25 排对的名次弄坏；
+- 同义改写组把 BM25 零命中的 5 条接回 top-3，hit@3 从 7/12 提到 12/12；
+- ② `candidates=0` 档 3/3 输出与纯 BM25 完全一致（text + 命中顺序 + reason），不参与上面统计；
+- `TMP/rag-bench.mjs` 里标准 12 条同样按档报：① 11 条 BM25/RAG 均 9/11 · 11/11；② 1 条等价 BM25。
+- 降级路径实测：无 key → `EmbeddingError(no-key)`（listener 不传 semantic，即 0.5.0 路径）；坏缓存 → 当空库不抛错。
+
+### 取舍：为什么还是不引向量库
+
+- 语料是单文件 `JOURNAL.jsonl` 的尾部几百条，暴力 cosine 全扫是微秒级；FAISS / HNSW 的
+  收益为零，运维成本为正；
+- 缓存是**侧车派生文件**：坏了删、模型换了作废，不需要迁移；文件即真源，向量只是索引；
+- RRF 只用排名不用绝对分数，两路门槛各自独立，调语义门槛不会破坏 BM25 行为；
+- 代价：每轮多一次 embedding 网络调用（实测均值约 150–300 ms、P95 230–480 ms，受网络影响；仍远低于 4 s 超时），
+  首次建索引在后台补齐（65 段约 1.4–2.8 s，受网络影响）。嫌慢就 `semantic: false`，纯 BM25 不受影响。
 
 ## 失效条目：不召回、不当去重墙
 
@@ -239,6 +364,15 @@ JOURNAL.jsonl（只读尾部 scanEntries 条，默认 500）
 | `rehydrate` | `true` | 压缩后是否重建注入一次本会话近期日志 |
 | `maxRehydrateEntries` | `12` | 重建包最多回放几条日志 |
 | `maxRehydrateChars` | `1200` | 重建包总字符上限 |
+| `semantic` | `true` | 语义召回总开关；没 key 时不生效（纯 BM25 照常） |
+| `semanticModel` | `BAAI/bge-m3` | 嵌入模型（硅基流动，1024 维） |
+| `semanticBaseURL` | `https://api.siliconflow.cn/v1` | 接口地址；换兼容 OpenAI 协议的自建接口时改这里 |
+| `semanticApiKey` | `''` | 空 = 读 `$DSH_HOME/memory/recall-rag.json` → env `SILICONFLOW_API_KEY` |
+| `semanticMinSimilarity` | `0.55` | cosine 门槛（0–1）；语义候选还要 ≥ 最高相似度 × `relativeCut` |
+| `semanticTimeoutMs` | `4000` | 单轮语义查询超时；超时降级纯 BM25 |
+| `semanticMinQueryChars` | `4` | 查询短于此不 embed |
+| `semanticCachePath` | `''` | 空 = `$DSH_HOME/memory/recall/embeddings.json` |
+| `semanticWarmupBatch` | `64` | 每轮后台最多补多少条向量（不阻塞本轮） |
 
 兼容规则（`resolveBudget()`）：**新键 > 0 优先；为 0 或没写时回落到旧键**（`maxTotalChars → maxChars`、
 `maxEntryChars → perChunkChars`），再没有就用 600 / 240；`minEntryChars` 不会超过单条上限。
@@ -281,11 +415,19 @@ JOURNAL.jsonl（只读尾部 scanEntries 条，默认 500）
 | `recall.dedupeAgainstMemory` | 高级 | 开关 | 开 | 与 FACT.md / 项目 MEMORY.md 去重（行级 Dice） |
 | `recall.workspaceIsolation` | 高级 | 开关 | 开 | 按工作区隔离召回；没有 cwd 的旧日志一律放行 |
 | `recall.debug` | 高级 | 开关 | 关 | 诊断日志 |
+| `semantic` | 自动召回 · 语义 | 开关 | 开 | 语义召回（RAG）；没配置 key 时不生效 |
+| `semanticModel` | 自动召回 · 语义 | 文本 | `BAAI/bge-m3` | 嵌入模型 |
+| `semanticApiKey` | 自动召回 · 语义 | 文本 | — | 硅基流动 API Key；**单独写 `recall-rag.json`**，不进覆盖层，页面不回显 |
+| `semanticMinSimilarity` | 自动召回 · 语义 | 文本 | `0.55` | 相似度门槛（0–1） |
+| `semanticTimeoutMs` | 自动召回 · 语义 | 文本 | `4000` | 语义超时（毫秒，≥100） |
 
 回写只存**用户显式改过**的键，落在 `$DSH_HOME/memory/recall.json`（与父插件的
 `injection.json` 并列）；没设过的键仍取 `cordis.patch.yml` 里的 config，删掉文件
 即恢复组合默认值。开关与数值**下一轮就生效**（监听器每轮现读 config；改
 `scanEntries` 会丢掉索引缓存并按新条数重建）。
+
+**语义分组是例外**：`semanticApiKey` 单独原子写 `$DSH_HOME/memory/recall-rag.json`（`chmod 600`），
+不进 `recall.json` —— 避免 key 随配置同步进 git / tgz；其余 `semantic*` 数值项照常走覆盖层。
 
 非法值（非数字、越界、非整数）会直接抛错：页面保留旧值并显示原因，不会出现
 「页面显示一个数、实际生效另一个数」。`ctx.get('personaMemory')` 拿不到服务时
@@ -364,10 +506,17 @@ node test/workspace.test.mjs        # 工作区隔离
 node test/hit-gate.test.mjs         # 命中门槛 + topK 分档
 node test/cross-turn.test.mjs       # 跨轮去重
 node test/dedupe-dice.test.mjs      # 行级 Dice 去重
+node test/semantic.test.mjs         # embedding 客户端 / float16 / 向量缓存（假 fetch，不联网）
+node test/fuse.test.mjs             # RRF 融合 / 语义门槛（纯函数）
+node test/rag-integration.test.mjs  # 语义通道接进 recall（伪造向量，不联网）
+node test/rag-eval.test.mjs         # 语义召回在线对比（opt-in：需 SILICONFLOW_API_KEY，无 key skip）
 ```
 
 `run-all.mjs` 开跑前会调用 `test/ensure-deps.mjs` 自动补齐 `schemastery` 与宿主包链接（缺才补，失败只警告）。
 `npm test` 等价于 `node test/run-all.mjs`。
+
+`rag-eval.test.mjs` 是唯一会联网的用例：没有 `SILICONFLOW_API_KEY` 时打印提示并 skip（不判失败），
+所以 `run-all.mjs` 默认全程离线；想跑真 API 就带环境变量单独跑它。
 
 需要宿主包的 `cordis-integration.test.mjs` 也由 `run-all.mjs` 一并跑：宿主包目录
 （`cordis` / `@deepseek-ai/dsh-system-prompt`）由 `test/_host-paths.mjs` 自动探测，
@@ -396,13 +545,20 @@ node test/dedupe-dice.test.mjs      # 行级 Dice 去重
 | `hit-gate.test.mjs` | 常见单命中过滤、罕见单命中放行、多命中放行、topK 分档 5/4/3/1 |
 | `cross-turn.test.mjs` | 指纹跨轮去重、截断窗口不影响指纹、数组/Set 两种入参 |
 | `dedupe-dice.test.mjs` | 行切分、Dice、同义改写判重、阈值可配、接进 recall 去重 |
+| `semantic.test.mjs` | embedding 分批/顺序/空串/超时/http 错/malformed/no-key（假 fetch）、half 编解码 round-trip、向量缓存原子写/坏文件/剪枝/maxVectors、cosine 边界 |
+| `fuse.test.mjs` | RRF 手算、单路缺省、并列排序、语义比例与命中强度 |
+| `rag-integration.test.mjs` | 语义通道接进 recall：伪造向量下 BM25=0 也能召回、门槛过滤、无 key/超时与纯 BM25 完全一致、预算/去重/工作区隔离仍生效 |
+| `rag-eval.test.mjs` | **opt-in**（需 key）：12 条同义改写查询对比 BM25 vs RRF 融合的 hit@1 / hit@3，断言 RAG 不差于 BM25；无 key skip |
 
 ## 已知边界
 
 - **注入会累积到下一次 compaction**：这是宿主 `agent/pre-step` 注入的固有代价，
   `time-context` 也一样。护栏只能减少次数与体积，不能消除。
-- **不做语义检索/向量**：只有 BM25，同义改写（「召回」vs「检索」）不一定命中。
-  要语义层就得引入 embedding，那是另一个量级的依赖。
+- **语义通道是可选增量，不是向量库**：0.6.0 起可开 embedding + RRF；没有 key 就是纯 BM25。
+  同义改写（「召回」vs「检索」）靠向量补漏，不保证每次都比 BM25 好；不引向量库 / 常驻服务，
+  片段向量存文件侧车，可丢弃可重建（见上文「语义召回（RAG）」）。
+- **语义通道依赖外部接口**：硅基流动免费 embedding 仍有配额 / 网络风险；失败一律降级、绝不阻塞本轮。
+  正文片段会发给 `/embeddings` 接口（不含系统提示词与记忆文件正文），敏感环境建议关掉。
 - **只看日志尾部**：默认 500 条；更旧的笔记要 `memory action=search`。
 - **查询就是本轮用户消息**：不做 LLM query rewrite（不想为了召回再花一次模型调用）。
 - **中文按 2-gram**：召回率优先，偶尔会有噪声命中；`relativeCut` 与 `maxTotalChars` / `maxEntryChars` 兜底。
@@ -428,6 +584,8 @@ node test/dedupe-dice.test.mjs      # 行级 Dice 去重
 | `lib/chunk.js` | 长条目切段 |
 | `lib/tokenize.js` | CJK 2-gram + 拉丁整词 |
 | `lib/bm25.js` | BM25 打分 |
+| `lib/semantic.js` | embedding 客户端、float16 编解码、cosine、向量缓存侧车（可丢弃可重建） |
+| `lib/fuse.js` | 纯函数：RRF 融合、语义比例、命中强度 |
 | `lib/recall.js` | 工作区隔离/命中门槛/分档/去重/三档预算/渲染（纯函数） |
 | `lib/workspace.js` | cwd 归一、项目根、同工作区判定（无 cwd fail-open） |
 | `lib/dedupe.js` | 与记忆文件的行级 Dice 去重 |
