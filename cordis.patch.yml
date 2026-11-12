@@ -5,7 +5,7 @@
 #
 # 与 `@dsh-external/dsh-persona-memory` 是独立的两行：
 #   persona-memory         → 角色/全局/项目记忆（系统提示词段落，首条消息冻结）
-#   persona-memory-recall  → 长期日志按轮召回（本轮用户消息之后的一条 user 快照）
+#   persona-memory-recall  → 长期日志按轮召回（本轮用户消息之前的一条 user 快照）
 # 两者只通过磁盘上的 `$DSH_HOME/memory/JOURNAL.jsonl` 约定耦合，可以单独停用。
 - insert:
     - id: persona-memory-recall

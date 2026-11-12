@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/dsh-persona-memory-recall",
-  "version": "0.4.0",
-  "description": "DSH 长期日志自动召回：每轮按本轮用户消息从 JOURNAL.jsonl 做 BM25 检索，把命中的历史片段作为一条 user 快照消息追加到上下文（不改系统提示词，不破坏 KV 缓存前缀）",
+  "version": "0.5.0",
+  "description": "DSH 长期日志自动召回：每轮按本轮用户消息从 JOURNAL.jsonl 做 BM25 检索，把命中的历史片段作为一条 user 快照消息插到本轮用户消息之前（命中门槛 + 跨轮去重 + 工作区隔离；不改系统提示词，不破坏 KV 缓存前缀）",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",

@@ -147,8 +147,9 @@ const nextWith = (...texts) => async () => ({ kind: 'enter', messages: texts.map
     watch.mark('s6');
     const decision = await bound.listener(makePayload('s6', 1), nextWith('薄壳模式怎么短路 llm stream'));
     assert.equal(decision.messages.length, 2, '本轮只允许一条注入消息');
-    assert.match(decision.messages[1].content[0].text, /^<recalled-journal /, '命中的轮次走 BM25，不注入重建包');
-    assert.equal(decision.messages[0].source.kind, 'user', 'BM25 仍按原纪律追加在用户消息之后');
+    assert.match(decision.messages[0].content[0].text, /^<recalled-journal /, '命中的轮次走 BM25，不注入重建包');
+    assert.equal(decision.messages[1].source.kind, 'user', 'BM25 与重建包同口径：splice 到用户消息之前');
+    assert.equal(decision.messages[0].source.kind, mod.SOURCE_KIND, '召回块来源标记不变');
     assert.ok(logs.some((line) => line.includes('path=bm25')), 'debug 应写明选了 BM25 这条路');
     assert.equal(watch.isPending('s6'), true, '重建包没注入，标记应留到没有命中的轮次');
 }

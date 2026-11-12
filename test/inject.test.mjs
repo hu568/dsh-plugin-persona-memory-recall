@@ -21,6 +21,7 @@ const file = join(home, 'JOURNAL.jsonl');
 const entries = [
     { ts: '2026-10-30T01:30:21.036Z', tags: ['dsh'], text: '薄壳模式：在宿主层短路 llm/stream，每轮只调用一次 cmd。' },
     { ts: '2026-09-01T00:00:00.000Z', tags: ['ui'], text: '右侧栏面板改用注入样式表，主题色用 color-mix 推导。' },
+    { ts: '2026-08-01T00:00:00.000Z', tags: ['memory'], text: 'FACT.md 有 100 行和 8000 字节双上限，超限直接拒绝写入。' },
 ];
 writeFileSync(file, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`, 'utf8');
 
@@ -59,13 +60,13 @@ const makePayload = (id, turn, header = { cwd: 'C:/work' }, aborted = false) => 
 
 const nextWith = (text) => async () => ({ kind: 'enter', messages: [userMessage(text)] });
 
-/* ══ 1. 命中：追加一条快照消息，形状正确 ══ */
+/* ══ 1. 命中：splice 一条快照消息到用户消息之前，形状正确 ══ */
 {
     const bound = makeBound();
     const payload = makePayload('s1', 1);
     const decision = await bound.listener(payload, nextWith('薄壳模式怎么短路 llm stream'));
-    assert.equal(decision.messages.length, 2, '命中时应追加一条消息');
-    const injected = decision.messages[1];
+    assert.equal(decision.messages.length, 2, '命中时应注入一条消息');
+    const injected = decision.messages[0];
     assert.equal(typeof injected.id, 'string');
     assert.equal(injected.role, 'user');
     assert.equal(injected.source.kind, mod.SOURCE_KIND, '来源标记应唯一');
@@ -73,21 +74,52 @@ const nextWith = (text) => async () => ({ kind: 'enter', messages: [userMessage(
     assert.deepEqual(injected.source.sections.map((section) => section.name), [mod.SECTION_NAME]);
     assert.match(injected.content[0].text, /^<recalled-journal /);
     assert.match(injected.content[0].text, /薄壳模式/);
+    assert.equal(
+        decision.messages[1].source.kind,
+        'user',
+        '召回块必须排在用户消息之前：模型最后读到的应是本轮意图，不是工程日志',
+    );
     assert.equal(bound.states.size, 1, '应记录会话状态');
+    assert.ok(bound.states.get('s1').injected.size >= 1, '应记录已注入片段的指纹');
 
     /* 同一轮同一查询（工具循环 step 2..N）不重复注入 */
     const again = await bound.listener(payload, nextWith('薄壳模式怎么短路 llm stream'));
     assert.equal(again.messages.length, 1, '同一轮同一查询只注入一次');
 
-    /* 同一轮换了查询（steering）→ 允许再召回一次 */
+    /* 同一轮换了查询（steering）→ 允许再召回一次（命中另一条日志） */
     const steered = await bound.listener(payload, nextWith('右侧栏面板的样式表怎么推导'));
     assert.equal(steered.messages.length, 2, '同一轮的新查询应重新召回');
 
-    /* 新的一轮即使查询相同也应重新召回 */
+    /* 新的一轮即使查询相同、命中的片段已经注入过 → 跨轮去重跳过 */
     const nextTurn = await bound.listener(makePayload('s1', 2), nextWith('薄壳模式怎么短路 llm stream'));
-    assert.equal(nextTurn.messages.length, 2, '新的一轮应重新召回');
+    assert.equal(nextTurn.messages.length, 1, '同一片段已注入过，新的一轮不应重注');
+
+    /* 换措辞命中「没注入过」的另一条日志 → 仍然允许注入 */
+    const other = await bound.listener(makePayload('s1', 3), nextWith('FACT 上限 拒绝写入 字节'));
+    assert.equal(other.messages.length, 2, '没注入过的片段仍应可召回');
+
     bound.dispose();
     assert.equal(bound.states.size, 0, 'dispose 应清空状态');
+}
+
+/* ══ 1b. 压缩成功清空跨轮去重集合：被逐出的片段可以补回 ══ */
+{
+    const bound = makeBound();
+    const sleepingWatch = {
+        handleEvent() { return true; },
+        isPending() { return false; },
+        marker() { return undefined; },
+        clear() { return true; },
+    };
+    const first = await bound.listener(makePayload('s-compact', 1), nextWith('薄壳模式怎么短路 llm stream'));
+    assert.equal(first.messages.length, 2, '压缩前应能命中并注入');
+    assert.ok(bound.states.get('s-compact').injected.size >= 1);
+
+    mod.handleSessionEvent(bound, sleepingWatch, { id: 's-compact' }, { type: 'compaction/end', data: {} });
+    assert.equal(bound.states.get('s-compact').injected.size, 0, '压缩成功应清空去重集合');
+
+    const again = await bound.listener(makePayload('s-compact', 2), nextWith('薄壳模式怎么短路 llm stream'));
+    assert.equal(again.messages.length, 2, '压缩后同一片段应能补回上下文');
 }
 
 /* ══ 2. 不命中：一条都不发 ══ */
@@ -160,6 +192,12 @@ const nextWith = (text) => async () => ({ kind: 'enter', messages: [userMessage(
     assert.equal(defaults.maxChars, 600);
     assert.equal(defaults.subagent, false);
     assert.equal(defaults.journalPath, '');
+    /* 0.5.0 新增：命中门槛 / 分档 / 去重 / 工作区隔离的默认值 */
+    assert.equal(defaults.workspaceIsolation, true, '工作区隔离默认开');
+    assert.equal(defaults.minMatchedTokens, 2);
+    assert.equal(defaults.minCoverage, 0.15);
+    assert.equal(defaults.dedupeDiceThreshold, 0.7);
+    assert.equal(defaults.dedupeAcrossTurns, true);
 }
 
 rmSync(home, { recursive: true, force: true });

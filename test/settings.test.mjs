@@ -131,7 +131,7 @@ const itemOf = (items, key) => {
     const { ctx } = makeCtx({ services: { personaMemory: pm.service } });
     mod.apply(ctx, { journalPath: journal });
 
-    assert.equal(pm.items.size, 10, '应注册 9 个可写项 + 1 个只读项');
+    assert.equal(pm.items.size, 11, '应注册 10 个可写项 + 1 个只读项');
     assert.equal(itemOf(pm.items, 'enabled').value, true);
     assert.equal(itemOf(pm.items, 'maxChars').value, '600');
     assert.equal(itemOf(pm.items, 'topK').value, '5');
@@ -140,6 +140,7 @@ const itemOf = (items, key) => {
     assert.equal(itemOf(pm.items, 'minTurnsBetween').value, '0');
     assert.equal(itemOf(pm.items, 'subagent').value, false);
     assert.equal(itemOf(pm.items, 'dedupeAgainstMemory').value, true);
+    assert.equal(itemOf(pm.items, 'workspaceIsolation').value, true, '工作区隔离默认开');
     assert.equal(itemOf(pm.items, 'debug').value, false);
     assert.equal(itemOf(pm.items, 'enabled').group, '自动召回');
     assert.equal(itemOf(pm.items, 'enabled').kind, 'toggle');
@@ -220,7 +221,7 @@ const itemOf = (items, key) => {
     const pm = makePersonaMemory();
     const { ctx } = makeCtx({ services: { personaMemory: pm.service }, deferServices: true });
     mod.apply(ctx, { journalPath: journal });
-    assert.equal(pm.items.size, 10, 'deferred get 应通过 inject 补注册');
+    assert.equal(pm.items.size, 11, 'deferred get 应通过 inject 补注册（10 个可写 + 1 个只读）');
 }
 
 /* ══ 5. 完全没有 personaMemory：静默跳过，召回监听仍在 ══ */
@@ -235,7 +236,7 @@ const itemOf = (items, key) => {
     const pm = makePersonaMemory();
     const { ctx, effects } = makeCtx({ services: { personaMemory: pm.service } });
     mod.apply(ctx, { journalPath: journal });
-    assert.equal(pm.items.size, 10);
+    assert.equal(pm.items.size, 11, '10 个可写项 + 1 个只读项');
 
     const dispose = effects[effects.length - 1];
     assert.equal(typeof dispose, 'function', '注册时应挂一个 disposer');

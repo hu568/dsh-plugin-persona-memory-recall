@@ -34,6 +34,26 @@ export interface RecallConfig {
     minTurnsBetween: number;
     subagent: boolean;
     dedupeAgainstMemory: boolean;
+    /** 与记忆文件的去重阈值（行级 2-gram Dice）；0 = 关掉 Dice。 */
+    dedupeDiceThreshold: number;
+    /** 去重只比对这么长以上的行。 */
+    dedupeMinLineChars: number;
+    /** 按工作区隔离召回（JOURNAL 行 cwd / workspaceId；无字段的旧行放行）。 */
+    workspaceIsolation: boolean;
+    /** 命中词少于这个数时走覆盖率判定；0 = 关掉命中门槛。 */
+    minMatchedTokens: number;
+    /** 单命中时的覆盖率门槛（罕见命中词 / 索引内存在的查询词数）；0 = 关。 */
+    minCoverage: number;
+    /** 单命中豁免的罕见度上限：命中词 df/N ≤ 该值才算罕见证据。 */
+    singleMatchMaxDfRatio: number;
+    /** topK 分档：最高分达到 minScore 的几倍才给满 5 条。 */
+    tierFullRatio: number;
+    /** topK 分档：最高分达到 minScore 的几倍才给 4 条。 */
+    tierHighRatio: number;
+    /** topK 分档：最高分达到 minScore 的几倍才给 3 条。 */
+    tierMidRatio: number;
+    /** 跨轮去重：同一片段注入过就不再注入（压缩成功时清空）。 */
+    dedupeAcrossTurns: boolean;
     maxQueryChars: number;
     debug: boolean;
     /** 压缩后是否把「本会话最近 N 条日志」重建注入一次。 */
@@ -48,11 +68,16 @@ export interface JournalEntry {
     ts: string;
     tags: string[];
     text: string;
+    /** 写入侧落盘的归属字段（跨包契约）；缺字段表示未知归属，读侧 fail-open。 */
+    cwd?: string;
+    workspaceId?: string;
 }
 
 export interface JournalChunk {
     entry: JournalEntry;
     text: string;
+    /** 原始片段正文的指纹（跨轮去重用）。 */
+    hash?: string;
 }
 
 export interface JournalSnapshot {
@@ -70,6 +95,15 @@ export interface RecallHit {
     tags: string[];
     text: string;
     score: number;
+    /** 原始片段正文的指纹（写进会话已注入集合用）。 */
+    hash: string;
+}
+
+export interface RecallFilterStats {
+    workspace: number;
+    injected: number;
+    gate: number;
+    duplicate: number;
 }
 
 export interface RecallResult {
@@ -89,6 +123,16 @@ export interface RecallResult {
     totalChars: number;
     /** 本次生效的三档预算。 */
     budget: { total: number; entry: number; min: number };
+    /** 按最高分分档后的实际 topK。 */
+    effectiveTopK: number;
+    /** 本轮最高 BM25 分（含时效加成）。 */
+    topScore: number;
+    /** 查询 token 数（去重前）。 */
+    queryTokens: number;
+    /** 各类过滤计数，用来解释「为什么一条都没发」。 */
+    filtered: RecallFilterStats;
+    /** 命中门槛的实际计算值。 */
+    gate: { coverage: number; rareMatched: number; existing: number };
 }
 
 export interface JournalStore {
@@ -116,7 +160,7 @@ export interface RecallSettingItem {
     onChange?(value: boolean | string | number): void | Promise<void>;
 }
 
-/** 覆盖层路径：`$DSH_HOME/memory/recall.json`。 */
+/** 覆盖层路径：$DSH_HOME/memory/recall.json。 */
 export declare function recallOverridesPath(): string;
 
 /** 设置页能改的键及其校验规则。 */
@@ -147,7 +191,7 @@ export declare function applyRecallOverrides(
     overrides: Partial<RecallConfig>,
 ): RecallConfig;
 
-/** 造设置项（id 形如 `recall.<key>`）。 */
+/** 造设置项（id 形如 recall.<key>）。 */
 export declare function createSettingItems(options: {
     config: RecallConfig;
     journalPath: string;
@@ -168,16 +212,90 @@ export declare function turnUserText(
     maxChars?: number,
 ): string;
 
+/** 召回选择与渲染（纯函数，测试/诊断可直接调）。 */
+export declare function recall(options: {
+    snapshot: JournalSnapshot;
+    query: string;
+    config: RecallConfig;
+    memoryTexts?: string[];
+    /** 会话 cwd：工作区隔离依据。 */
+    cwd?: string;
+    /** 本会话已注入片段指纹（跨轮去重）。 */
+    skipChunkHashes?: Set<string> | string[];
+    now?: number;
+}): RecallResult;
+
+export declare function resolveBudget(config?: Partial<RecallConfig>): {
+    total: number;
+    entry: number;
+    min: number;
+};
+
+/** 预算是否装得下「壳 + 最小一条」。 */
+export declare function budgetViability(config?: Partial<RecallConfig>): {
+    ok: boolean;
+    total: number;
+    shell: number;
+    min: number;
+    minRequired: number;
+};
+
+/** 渲染召回块（前言三重条款在这里）。 */
+export declare function renderHits(lines: string[], count: number): string;
+
+/** 截断引流后缀。 */
+export declare const TRUNC_SUFFIX: string;
+
+/** 片头截断（重建包复用）。 */
+export declare function clipToLimit(text: string, limit: number): string;
+
+/** 从首个命中词开窗截断。 */
+export declare function clipAroundHit(text: string, limit: number, needles?: string[]): string;
+
+/** 按最高分给 topK 分档（5/4/3/1，且不超过用户 topK）。 */
+export declare function effectiveTopK(config: Partial<RecallConfig>, topScore: number): number;
+
+/** 命中门槛判定。 */
+export declare function hitGate(
+    config: Partial<RecallConfig>,
+    item: { matched: string[]; docLen: number; queryExisting?: number },
+    queryTokenCount: number,
+    index: { df: Map<string, number>; N: number } | undefined,
+): { ok: boolean; coverage: number; rareMatched: number; existing: number };
+
 export declare function createPreStepListener(options: {
     config: RecallConfig;
     store: JournalStore;
     memoryTextsFor: (session: unknown) => string[];
     logger?: { info?(message: string): void; warn?(message: string): void };
+    watch?: {
+        isPending(sessionId: string): boolean;
+        marker?(sessionId: string): { compactedAt: number } | undefined;
+        clear?(sessionId: string): boolean;
+    };
 }): {
     listener: (payload: unknown, next: () => unknown) => Promise<unknown>;
-    states: Map<string, { turn?: number; queryKey: string; lastInjectedTurn?: number }>;
+    states: Map<string, {
+        turn?: number;
+        queryKey: string;
+        lastInjectedTurn?: number;
+        /** 本会话已注入片段指纹。 */
+        injected: Set<string>;
+        /** 上一次没注入的原因。 */
+        lastSkipReason: string;
+        /** 预算不足告警是否已发过。 */
+        budgetWarned: boolean;
+    }>;
     dispose(): void;
 };
+
+/** session 事件分发：压缩成功后清标记与跨轮去重集合。 */
+export declare function handleSessionEvent(
+    bound: { states: Map<string, any> },
+    watch: { handleEvent(session: unknown, event: unknown): boolean },
+    session: unknown,
+    event: unknown,
+): boolean;
 
 export declare function createJournalStore(options: {
     file: string;

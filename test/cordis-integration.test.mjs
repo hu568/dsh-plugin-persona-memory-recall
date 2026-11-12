@@ -62,13 +62,14 @@ const dispatch = (turn, text) => {
     );
 };
 
-/* ══ 1. 真实派发：命中 → 追加快照消息 ══ */
+/* ══ 1. 真实派发：命中 → splice 快照消息到用户消息之前 ══ */
 const first = await dispatch(1, '薄壳模式怎么短路 llm stream');
-assert.equal(first.messages.length, 2, '应追加一条召回消息');
-assert.equal(first.messages[1].source.kind, mod.SOURCE_KIND);
-assert.equal(first.messages[1].source.form, 'snapshot');
-assert.match(first.messages[1].content[0].text, /<recalled-journal /);
-assert.match(first.messages[1].content[0].text, /薄壳模式/);
+assert.equal(first.messages.length, 2, '应注入一条召回消息');
+assert.equal(first.messages[0].source.kind, mod.SOURCE_KIND);
+assert.equal(first.messages[0].source.form, 'snapshot');
+assert.match(first.messages[0].content[0].text, /<recalled-journal /);
+assert.match(first.messages[0].content[0].text, /薄壳模式/);
+assert.equal(first.messages[1].source.kind, 'user', '本轮用户消息必须排在召回块之后（模型最后读到的是意图）');
 
 /* ══ 2. 同一轮同一查询不重复 ══ */
 const second = await dispatch(1, '薄壳模式怎么短路 llm stream');
