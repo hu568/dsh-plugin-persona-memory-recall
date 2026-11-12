@@ -126,5 +126,27 @@ const strict = recall({
 assert.equal(strict.text, null);
 assert.equal(strict.reason, 'below-min-score');
 
+/* 10. 同一 ts 的多行（批量写入撞同毫秒）：最终 hits 里只留最高分一段 */
+{
+    const tieFile = join(home, 'TIE.jsonl');
+    const tieTs = '2026-11-09T00:53:31.907Z';
+    const tieEntries = [
+        { ts: tieTs, tags: ['a'], text: '薄壳模式短路 llm stream 零推理，每轮只调用一次 cmd。' },
+        { ts: tieTs, tags: ['b'], text: '薄壳模式短路也能跑，但需要重新装配上下文。' },
+    ];
+    writeFileSync(tieFile, tieEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n', 'utf8');
+    const tieStore = createJournalStore({ file: tieFile, scanEntries: 500, chunkChars: 300, maxChunksPerEntry: 12 });
+    const tieResult = recall({
+        snapshot: tieStore.snapshot(),
+        query: '薄壳模式短路 llm stream',
+        config: { ...config, minScore: 0, relativeCut: 0, maxTotalChars: 2000, maxEntryChars: 400 },
+    });
+    assert.equal(tieResult.reason, 'ok');
+    const tieStamps = tieResult.hits.map((hit) => hit.ts);
+    assert.equal(tieStamps.length, 1, '同一 ts 的两行在 hits 里最多占一段');
+    assert.equal(new Set(tieStamps).size, tieStamps.length, '最终 hits 的 ts 必须唯一');
+    assert.match(tieResult.hits[0].text, /零推理/, '应保留分数最高的那段');
+}
+
 rmSync(home, { recursive: true, force: true });
 console.log('✓ select.test.mjs 全部通过');
